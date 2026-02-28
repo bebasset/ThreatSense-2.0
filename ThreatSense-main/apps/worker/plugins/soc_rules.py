@@ -63,12 +63,11 @@ class SocRules(BasePlugin):
 
         # Normalize + filter to time window (best-effort)
         cutoff = datetime.utcnow() - timedelta(minutes=window_minutes)
-        norm_events = []
+        norm_events: list[dict] = []
         for e in events:
             ts = self._parse_ts(e.get("ts"))
             if ts is None:
                 ts = datetime.utcnow()  # if missing, treat as current
-            # keep only within window if ts is parseable
             if ts >= cutoff:
                 norm_events.append({**e, "_ts": ts})
 
@@ -96,9 +95,7 @@ class SocRules(BasePlugin):
     # -------------------------
 
     def _detect_bruteforce_user_ip(self, events: list[dict], threshold: int) -> list[dict]:
-        """
-        Detect many failed logins for same (user, ip) in window.
-        """
+        """Detect many failed logins for same (user, ip) in window."""
         counts = defaultdict(int)
         for e in events:
             if e.get("event_type") in ("auth_failed", "login_failed", "failed_login"):
@@ -106,7 +103,7 @@ class SocRules(BasePlugin):
                 ip = e.get("ip") or "unknown_ip"
                 counts[(user, ip)] += 1
 
-        findings = []
+        findings: list[dict] = []
         for (user, ip), c in counts.items():
             if c >= threshold:
                 findings.append({
@@ -119,9 +116,7 @@ class SocRules(BasePlugin):
         return findings
 
     def _detect_bruteforce_global_ip(self, events: list[dict], threshold: int) -> list[dict]:
-        """
-        Detect many failed logins from a single IP across multiple users.
-        """
+        """Detect many failed logins from a single IP across multiple users."""
         counts = defaultdict(int)
         users_by_ip = defaultdict(set)
 
@@ -132,24 +127,22 @@ class SocRules(BasePlugin):
                 counts[ip] += 1
                 users_by_ip[ip].add(user)
 
-        findings = []
+        findings: list[dict] = []
         for ip, c in counts.items():
             if c >= threshold and len(users_by_ip[ip]) >= 3:
                 findings.append({
                     "title": "Potential password spraying activity",
                     "severity": "high",
                     "category": "soc.auth",
-                    "evidence
+                    "evidence": f"{c} failed login attempts from ip={ip} across {len(users_by_ip[ip])} users within the monitoring window.",
                     "remediation": "Block/limit the IP, enforce MFA, enable conditional access, and review authentication logs for successful logins from the same IP.",
                 })
         return findings
 
     def _detect_suspicious_admin_activity(self, events: list[dict], threshold: int) -> list[dict]:
-        """
-        Detect bursts of privileged/admin actions.
-        """
+        """Detect bursts of privileged/admin actions."""
         admin_actions = 0
-        examples = []
+        examples: list[str] = []
 
         for e in events:
             if e.get("event_type") in ("admin_action", "privileged_action"):
@@ -166,17 +159,16 @@ class SocRules(BasePlugin):
                 "remediation": "Confirm changes are authorized. Review who performed the actions, validate MFA, and restrict admin roles to least privilege.",
             }]
         return []
-        
+
     def _detect_new_admin_creation(self, events: list[dict]) -> list[dict]:
-        """
-        Detect creation of a new admin / privilege escalation events (best-effort).
-        """
-        matches = []
+        """Detect creation of a new admin / privilege escalation events (best-effort)."""
+        matches: list[str] = []
         for e in events:
             et = (e.get("event_type") or "").lower()
             action = (e.get("action") or "").lower()
-            if et in ("user_role_changed", "admin_created", "privilege_granted") or "admin" in action and ("add" in action or "grant" in action):
+            if et in ("user_role_changed", "admin_created", "privilege_granted") or ("admin" in action and ("add" in action or "grant" in action)):
                 matches.append(self._event_brief(e))
+
         if matches:
             return [{
                 "title": "New admin/privilege grant event detected",
@@ -186,10 +178,40 @@ class SocRules(BasePlugin):
                 "remediation": "Validate business justification, confirm change control ticket, review account security, and revert unauthorized privilege changes immediately.",
             }]
         return []
-     "remediation": "Review user’s session activity, enforce MFA, check conditional access policies, and reset credentials if suspicious.",
-                })
+
+    def _detect_impossible_travel_hint(self, events: list[dict]) -> list[dict]:
+        """
+        MVP heuristic placeholder: flags logins from different IPs/devices in a short time window.
+        """
+        # Lightweight heuristic: if same user has multiple successful logins from different IPs, flag.
+        last_by_user: dict[str, tuple[datetime, str]] = {}
+        findings: list[dict] = []
+
+        for e in events:
+            if e.get("event_type") not in ("auth_success", "login_success", "login_ok"):
+                continue
+
+            user = e.get("user") or "unknown_user"
+            ip = e.get("ip") or "unknown_ip"
+            ts = e.get("_ts") if isinstance(e.get("_ts"), datetime) else self._parse_ts(e.get("ts")) or datetime.utcnow()
+
+            prev = last_by_user.get(user)
+            if prev:
+                prev_ts, prev_ip = prev
+                if prev_ip != ip and (ts - prev_ts).total_seconds() <= 10 * 60:  # 10 minutes
+                    findings.append({
+                        "title": f"Suspicious rapid location change for user {user}",
+                        "severity": "medium",
+                        "category": "soc.auth",
+                        "evidence": f"User={user} had successful logins from ip={prev_ip} then ip={ip} within 10 minutes.",
+                        "remediation": "Review the user’s session activity, enforce MFA, check conditional access policies, and reset credentials if suspicious.",
+                    })
+
+            last_by_user[user] = (ts, ip)
+
         return findings
-     # -------------------------
+
+    # -------------------------
     # Helpers
     # -------------------------
 
@@ -199,7 +221,6 @@ class SocRules(BasePlugin):
         if isinstance(ts_val, datetime):
             return ts_val
         try:
-            # Accept ISO strings with 'Z'
             s = str(ts_val).replace("Z", "+00:00")
             return datetime.fromisoformat(s).replace(tzinfo=None)
         except Exception:
