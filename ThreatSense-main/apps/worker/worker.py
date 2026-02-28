@@ -7,6 +7,5 @@ celery_app = Celery(
     "threatsense_worker",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["tasks.scan_tasks"],
+    include=["tasks.scan_task"],
 )
-include=["tasks.scan_task"]
