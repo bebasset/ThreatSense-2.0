@@ -1,0 +1,7 @@
+celery==5.4.0
+redis==5.0.8
+sqlmodel==0.0.22
+psycopg[binary]==3.2.1
+pydantic-settings==2.6.1
+fastapi
+uvicorn[standard]
