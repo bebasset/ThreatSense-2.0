@@ -121,4 +121,4 @@ class NucleiScan(BasePlugin):
                     "category": "scanner_error",
                     "evidence": f"Exception while running nuclei: {type(e).__name__}: {e}",
                     "remediation": "Check worker container logs and nuclei installation.",
-                }],
+                })],
