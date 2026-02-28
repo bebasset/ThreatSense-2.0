@@ -9,3 +9,4 @@ celery_app = Celery(
     backend=REDIS_URL,
     include=["tasks.scan_tasks"],
 )
+include=["tasks.scan_task"]
